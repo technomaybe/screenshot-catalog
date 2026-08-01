@@ -1,0 +1,37 @@
+# ── Python ──────────────────────────────
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# ── PyInstaller build output ────────────
+build/
+dist/
+
+# ── Databases & indexed screenshot text (personal data) ──
+*.db
+*.db-journal
+screenshot_index.db
+
+# ── Local machine config (contains personal paths) ──
+app_settings.json
+
+# ── Large backup archives ───────────────
+*.zip
+
+# ── Logs ────────────────────────────────
+logs/
+*.log
+
+# ── Local tooling config ────────────────
+.claude/
+
+# ── macOS ───────────────────────────────
+.DS_Store
+
+# ── Stray / empty files ─────────────────
+=0.4.0
+
+# Personal dev notes (local only)
+CLAUDE.md
+PROJECT_KNOWLEDGE_BASE.md

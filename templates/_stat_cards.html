@@ -1,0 +1,131 @@
+{# Shared collapsible stat cards — include on every page #}
+<div class="stat-bar">
+  <button class="stat-toggle" id="stat-toggle-btn" onclick="toggleStats()" title="Show/hide stats">
+    <span id="stat-toggle-label">▾ Hide stats</span>
+  </button>
+</div>
+
+<div id="scan-progress" class="scan-progress"
+     style="display:none; margin:12px 0; padding:12px 16px; border-radius:8px;
+            background:#eef2ff; color:#1e293b; font-weight:600;"></div>
+
+<div class="stat-cards" id="stat-cards-block">
+  <a class="stat-card stat-card--link" href="/status-files?filter=total">
+    <div class="stat-value" id="sv-total">{{ stats.total }}</div>
+    <div class="stat-label">Total indexed</div>
+  </a>
+  <a class="stat-card stat-card--link" href="/status-files?filter=ocr">
+    <div class="stat-value" id="sv-processed">{{ stats.processed }}</div>
+    <div class="stat-label">With OCR text</div>
+  </a>
+  <a class="stat-card stat-card--muted stat-card--link" href="/status-files?filter=no_text"
+     title="OCR ran but found no readable text — low contrast, icons, or blank areas">
+    <div class="stat-value" id="sv-no_text">{{ stats.no_text }}</div>
+    <div class="stat-label">No text found ⓘ</div>
+  </a>
+  <a class="stat-card stat-card--muted stat-card--link" href="/status-files?filter=duplicate"
+     title="Same image content under different filenames">
+    <div class="stat-value" id="sv-duplicate">{{ stats.duplicate }}</div>
+    <div class="stat-label">Duplicates ⓘ</div>
+  </a>
+  <a class="stat-card stat-card--warn stat-card--link" href="/status-files?filter=failed"
+     id="card-failed" title="OCR failed on these files"
+     style="{% if not stats.failed %}display:none;{% endif %}">
+    <div class="stat-value" id="sv-failed">{{ stats.failed }}</div>
+    <div class="stat-label">Failed ⓘ</div>
+  </a>
+  <a class="stat-card stat-card--accent stat-card--link" href="/status-files?filter=today">
+    <div class="stat-value" id="sv-today">{{ stats.today }}</div>
+    <div class="stat-label">Indexed today</div>
+  </a>
+  <a class="stat-card stat-card--accent stat-card--link" href="/status-files?filter=this_week">
+    <div class="stat-value" id="sv-this_week">{{ stats.this_week }}</div>
+    <div class="stat-label">This week</div>
+  </a>
+  <a class="stat-card stat-card--wide stat-card--link" href="/status-files?filter=today">
+    <div class="stat-value stat-value--sm" id="sv-last">{{ stats.last_indexed[:16] if stats.last_indexed != '—' else '—' }}</div>
+    <div class="stat-label">Last indexed</div>
+  </a>
+</div>
+
+<script>
+  (function() {
+    var hidden = localStorage.getItem('statsHidden') === '1';
+    if (hidden) {
+      var block = document.getElementById('stat-cards-block');
+      var label = document.getElementById('stat-toggle-label');
+      if (block) block.style.display = 'none';
+      if (label) label.textContent = '▸ Show stats';
+    }
+  })();
+
+  function toggleStats() {
+    var block = document.getElementById('stat-cards-block');
+    var label = document.getElementById('stat-toggle-label');
+    var hidden = block.style.display === 'none';
+    block.style.display = hidden ? 'flex' : 'none';
+    label.textContent = hidden ? '▾ Hide stats' : '▸ Show stats';
+    localStorage.setItem('statsHidden', hidden ? '0' : '1');
+  }
+
+  // ── Live stats: poll /stats.json and update the bar in place ───────────────
+  (function() {
+    var NUM = ['total','processed','no_text','duplicate','failed','today','this_week'];
+    function el(id){ return document.getElementById(id); }
+
+    function render(d) {
+      NUM.forEach(function(k){
+        var e = el('sv-' + k);
+        if (e && d[k] != null) e.textContent = d[k];
+      });
+      var last = el('sv-last');
+      if (last) last.textContent = (d.last_indexed && d.last_indexed !== '—')
+        ? String(d.last_indexed).substring(0, 16) : '—';
+
+      // Reveal the Failed card if failures appear mid-scan.
+      var cf = el('card-failed');
+      if (cf) cf.style.display = (d.failed && d.failed > 0) ? '' : 'none';
+
+      var pb = el('scan-progress');
+      if (!pb) return;
+
+      if (d.scanning) {
+        var msg;
+        if (d.mode === 'rebuild' && d.target_total > 0) {
+          var pct = Math.min(100, Math.round(100 * d.total / d.target_total));
+          msg = '⏳ Rebuilding index… ' + d.total + ' / ' + d.target_total +
+                ' files re-OCR’d (' + pct + '%)';
+        } else if (d.mode === 'rebuild') {
+          msg = '⏳ Rebuilding index… counting files (' + d.total + ' done)';
+        } else {
+          msg = '⏳ Re-indexing…' +
+                (d.target_total > 0 ? ' scanning ' + d.target_total + ' files' : '') +
+                ' — ' + d.today + ' added today';
+        }
+        pb.textContent = msg;
+        pb.style.display = 'block';
+        pb.dataset.wasScanning = '1';
+      } else {
+        if (pb.dataset.wasScanning === '1') {
+          pb.textContent = '✅ Scan complete — ' + d.total + ' indexed, ' +
+                           d.processed + ' with text.';
+          pb.style.background = '#ecfdf5';
+          pb.style.display = 'block';
+        } else {
+          pb.style.display = 'none';
+        }
+      }
+    }
+
+    function poll() {
+      if (document.hidden) return;
+      fetch('/stats.json', { cache: 'no-store' })
+        .then(function(r){ return r.json(); })
+        .then(render)
+        .catch(function(){});
+    }
+
+    poll();
+    setInterval(poll, 3000);
+  })();
+</script>

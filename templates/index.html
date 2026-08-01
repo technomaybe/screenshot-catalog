@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Screenshot Catalog Search</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <main class="container">
+    <nav class="top-tabs" aria-label="Views">
+      <a class="tab-link {% if active_tab == 'search' %}active{% endif %}" href="/">Search</a>
+      <a class="tab-link {% if active_tab == 'word-cloud' %}active{% endif %}" href="/word-cloud">Word Cloud</a>
+      <a class="tab-link {% if active_tab == 'settings' %}active{% endif %}" href="/settings">Settings</a>
+      <a class="tab-link {% if active_tab == 'about' %}active{% endif %}" href="/about">About</a>
+    </nav>
+
+    <header class="header">
+      <h1>Screenshot Catalog Search</h1>
+
+      <div class="page-actions">
+        <form method="post" action="/reindex" id="reindex-form">
+          <button type="submit" class="secondary-btn" id="reindex-btn" onclick="startReindex()">Re-index now</button>
+          <span id="reindex-status" class="reindex-status" style="display:none;">⏳ Scanning… this may take a moment</span>
+        </form>
+      </div>
+    </header>
+
+    {% include '_stat_cards.html' %}
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <section class="flash {{ category }}">{{ message }}</section>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    <script>
+      function startReindex() {
+        document.getElementById('reindex-btn').disabled = true;
+        document.getElementById('reindex-btn').textContent = 'Scanning…';
+        document.getElementById('reindex-status').style.display = 'inline';
+      }
+    </script>
+
+    <section class="search-panel">
+      <form method="get" action="/" class="search-form">
+        <input
+          type="text"
+          name="q"
+          value="{{ query }}"
+          placeholder="Try: PRJ-55759 or 'release schedule'"
+          autofocus
+        >
+        <input type="number" name="limit" min="1" max="100" value="{{ limit }}">
+        <button type="submit">Search</button>
+      </form>
+      <p class="hint">Supports phrase search, OR, and prefix wildcard, for example: "AI in a day", project OR Teams, notific*</p>
+    </section>
+
+    {% if error %}
+      <section class="error">Search error: {{ error }}</section>
+    {% endif %}
+
+    {% if query and not results %}
+      <section class="empty">No results found for: <strong>{{ query }}</strong></section>
+    {% endif %}
+
+    {% if results %}
+      <section class="results-meta">Found {{ results|length }} result(s) for <strong>{{ query }}</strong></section>
+      <section class="results">
+        {% for row in results %}
+          <article class="card">
+            <div class="card-top">
+              <h2>{{ row['file_name'] }}</h2>
+            </div>
+            <div class="card-grid">
+              <div class="card-left">
+                <div class="meta">
+                  <span>Captured: {{ row['created_time'] }}</span>
+                  <span>Indexed: {{ row['indexed_time'] }}</span>
+                </div>
+                <div class="path">{{ row['file_path'] }}</div>
+                {% if row['snippet'] %}
+                  <div class="snippet-label">Matched snippet</div>
+                  <pre class="snippet">{{ row['snippet'] }}</pre>
+                {% endif %}
+                <div class="ocr-label">Complete OCR text</div>
+                <div class="ocr-box">{{ row['ocr_text'] or '(no text found)' }}</div>
+              </div>
+              <div class="card-right">
+                <a class="open-link-btn" href="/open-preview?path={{ row['file_path']|urlencode }}">Open in Preview</a>
+                <img
+                  class="preview"
+                  src="{{ row['file_path']|img_url }}"
+                  alt="Preview of {{ row['file_name'] }}"
+                  loading="lazy"
+                >
+              </div>
+            </div>
+          </article>
+        {% endfor %}
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>

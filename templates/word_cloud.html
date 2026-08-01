@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Screenshot Word Cloud</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <main class="container">
+    <nav class="top-tabs" aria-label="Views">
+      <a class="tab-link {% if active_tab == 'search' %}active{% endif %}" href="/">Search</a>
+      <a class="tab-link {% if active_tab == 'word-cloud' %}active{% endif %}" href="/word-cloud">Word Cloud</a>
+      <a class="tab-link {% if active_tab == 'settings' %}active{% endif %}" href="/settings">Settings</a>
+      <a class="tab-link {% if active_tab == 'about' %}active{% endif %}" href="/about">About</a>
+    </nav>
+
+    <header class="header">
+      <h1>Screenshot OCR Word Cloud</h1>
+      <p>Top words from all indexed screenshots.</p>
+    </header>
+
+    {% include '_stat_cards.html' %}
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <section class="flash {{ category }}">{{ message }}</section>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    <section class="search-panel">
+      <form method="get" action="/word-cloud" class="search-form cloud-form">
+        <label for="max_words">Max words</label>
+        <input id="max_words" type="number" name="max_words" min="20" max="300" value="{{ max_words }}">
+        <button type="submit">Refresh Cloud</button>
+      </form>
+    </section>
+
+    <section class="cloud-panel">
+      {% if cloud_items %}
+        <div class="word-cloud">
+          {% for item in cloud_items %}
+            <a class="cloud-word" href="/?q={{ item.word|urlencode }}&limit=10&sort=recent" style="font-size: {{ item.size }}px;" title="{{ item.word }} — click to see 10 most recent">{{ item.word }}</a>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="empty">No OCR text available for word cloud.</div>
+      {% endif %}
+    </section>
+
+    {% if cloud_items %}
+      <section class="cloud-table-wrap">
+        <h2>Top Words</h2>
+        <table class="cloud-table">
+          <thead>
+            <tr><th>Word</th><th>Count</th></tr>
+          </thead>
+          <tbody>
+            {% for item in cloud_items[:40] %}
+              <tr style="cursor:pointer;" onclick="window.location='/?q={{ item.word|urlencode }}&limit=10&sort=recent'">
+                <td>{{ item.word }}</td>
+                <td>{{ item.count }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>

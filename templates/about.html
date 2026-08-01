@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>About</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <main class="container">
+    <nav class="top-tabs" aria-label="Views">
+      <a class="tab-link {% if active_tab == 'search' %}active{% endif %}" href="/">Search</a>
+      <a class="tab-link {% if active_tab == 'word-cloud' %}active{% endif %}" href="/word-cloud">Word Cloud</a>
+      <a class="tab-link {% if active_tab == 'settings' %}active{% endif %}" href="/settings">Settings</a>
+      <a class="tab-link {% if active_tab == 'about' %}active{% endif %}" href="/about">About</a>
+    </nav>
+
+    <header class="header">
+      <h1>About This App</h1>
+      <p>Local OCR-powered screenshot search for Windows. Running on port {{ current_port }}.</p>
+    </header>
+
+    <section class="search-panel about-panel">
+      <h2>What it does</h2>
+      <ul>
+        <li>Indexes screenshot text with OCR into SQLite</li>
+        <li>Searches by words, phrases, domains, and ticket IDs</li>
+        <li>Shows inline thumbnails and full OCR text</li>
+        <li>Builds a word cloud from indexed content</li>
+      </ul>
+
+      <h2>Quick help</h2>
+      <ul>
+        <li>Use Search to find screenshots by content</li>
+        <li>Use Word Cloud to spot common topics</li>
+        <li>Use Settings to change folders, export defaults, and port</li>
+        <li>Use Re-index after adding new screenshots</li>
+      </ul>
+
+      <h2>Health check</h2>
+      <p><a href="/healthz" target="_blank" rel="noopener">/healthz</a></p>
+
+      <h2>Logs</h2>
+      <p>Application logs are written to <strong>logs\screenshot_catalog.log</strong>.</p>
+    </section>
+  </main>
+</body>
+</html>

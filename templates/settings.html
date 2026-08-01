@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Settings</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <main class="container">
+    <nav class="top-tabs" aria-label="Views">
+      <a class="tab-link {% if active_tab == 'search' %}active{% endif %}" href="/">Search</a>
+      <a class="tab-link {% if active_tab == 'word-cloud' %}active{% endif %}" href="/word-cloud">Word Cloud</a>
+      <a class="tab-link {% if active_tab == 'settings' %}active{% endif %}" href="/settings">Settings</a>
+      <a class="tab-link {% if active_tab == 'about' %}active{% endif %}" href="/about">About</a>
+    </nav>
+
+    <header class="header">
+      <h1>Settings</h1>
+      <p>Port changes apply after restart.</p>
+    </header>
+
+    {% include '_stat_cards.html' %}
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <section class="flash {{ category }}">{{ message }}</section>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    <section class="search-panel settings-panel">
+      <form method="post" action="/settings" class="settings-form">
+        <label>Screenshots folder
+          <div class="folder-row" style="display:flex; gap:8px; align-items:center;">
+            <input type="text" id="screenshots_dir" name="screenshots_dir"
+                   value="{{ settings.SCREENSHOTS_DIR }}" style="flex:1;">
+            <button type="button" id="browse-btn" class="secondary-btn" hidden>Browse…</button>
+          </div>
+          <span class="field-hint">Use Browse to pick a folder, then Save settings. Run re-index (or restart) to apply.</span>
+        </label>
+        <label>App port
+          <input type="number" name="app_port" min="1024" max="65535" value="{{ settings.APP_PORT }}">
+        </label>
+        <label class="toggle-label">
+          <input type="checkbox" name="show_menu_bar_icon" value="1"
+            {% if settings.SHOW_MENU_BAR_ICON %}checked{% endif %}>
+          Show icon in menu bar
+          <span class="field-hint">Takes effect after restart</span>
+        </label>
+        <div class="settings-actions">
+          <button type="submit">Save settings</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="settings-tools">
+      <form method="post" action="/reindex">
+        <button type="submit" class="secondary-btn">Run re-index now</button>
+      </form>
+      <form method="post" action="/rebuild-index"
+            onsubmit="return confirm('Rebuild the whole catalog?\n\nThis clears the index and re-OCRs every screenshot with the latest OCR. It can take a while for large libraries. Existing search data is replaced.');">
+        <button type="submit" class="secondary-btn">Rebuild index (re-OCR everything)</button>
+      </form>
+      <span class="field-hint">Rebuild after an OCR upgrade so older screenshots (e.g. dark-mode/charts) get re-read with the improved pipeline.</span>
+    </section>
+  </main>
+
+  <script>
+    // Native folder picker — only wired up when running inside the desktop app
+    // (pywebview). In a plain browser the Browse button stays hidden and the
+    // text field still works.
+    (function () {
+      var btn = document.getElementById('browse-btn');
+      var input = document.getElementById('screenshots_dir');
+      if (!btn || !input) return;
+
+      function wire() {
+        btn.hidden = false;
+        btn.addEventListener('click', function () {
+          window.pywebview.api.pick_folder().then(function (path) {
+            if (path) { input.value = path; }
+          });
+        });
+      }
+
+      if (window.pywebview && window.pywebview.api) {
+        wire();
+      } else {
+        window.addEventListener('pywebviewready', wire);
+      }
+    })();
+  </script>
+</body>
+</html>
