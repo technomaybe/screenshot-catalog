@@ -391,6 +391,98 @@ def export_package_route():
     return redirect(request.referrer or url_for("settings_page"))
 
 
+@app.route("/duplicates")
+def duplicates_page():
+    try:
+        page = max(1, int(request.args.get("page", "1")))
+    except ValueError:
+        page = 1
+    per_page = 20
+
+    total_groups = db.count_duplicate_groups()
+    total_pages = max(1, (total_groups + per_page - 1) // per_page)
+    page = min(page, total_pages)
+
+    groups = db.get_duplicate_groups(page=page, per_page=per_page)
+
+    return render_template(
+        "duplicates.html",
+        active_tab="duplicates",
+        current_port=APP_PORT,
+        stats=db.get_stats(),
+        groups=groups,
+        page=page,
+        total_pages=total_pages,
+        total_groups=total_groups,
+    )
+
+
+def _trash_file(resolved_path: str) -> tuple[bool, str | None]:
+    """Move a file to macOS Trash (recoverable) rather than deleting it
+    outright, since this runs against real files in the user's screenshots
+    folder. Returns (success, error_message)."""
+    try:
+        from Foundation import NSFileManager, NSURL
+    except ImportError:
+        return False, "Trash support (pyobjc) is not available"
+
+    fm = NSFileManager.defaultManager()
+    url = NSURL.fileURLWithPath_(resolved_path)
+    ok, _resulting, error = fm.trashItemAtURL_resultingItemURL_error_(url, None, None)
+    if ok:
+        return True, None
+    return False, str(error) if error else "Unknown error moving file to Trash"
+
+
+@app.post("/duplicates/resolve")
+def duplicates_resolve():
+    """Move the checked duplicate copies to Trash and drop them from the index."""
+    raw_ids = request.form.getlist("remove_ids")
+    try:
+        ids = [int(v) for v in raw_ids]
+    except ValueError:
+        ids = []
+
+    return_page = request.form.get("page", "1")
+
+    if not ids:
+        flash("No files were selected.", "error")
+        return redirect(url_for("duplicates_page", page=return_page))
+
+    rows = db.get_records_by_ids(ids)
+    trashed_ids = []
+    failures = []
+
+    for row in rows:
+        resolved = resolve_image_path(row["file_path"])
+        if resolved is None:
+            # Already missing on disk — nothing to trash, just drop the stale record.
+            trashed_ids.append(row["id"])
+            continue
+        ok, error = _trash_file(resolved)
+        if ok:
+            trashed_ids.append(row["id"])
+        else:
+            failures.append(f"{row['file_name']} ({error})")
+
+    if trashed_ids:
+        db.delete_records_by_ids(trashed_ids)
+        logger.info("Moved %d duplicate file(s) to Trash", len(trashed_ids))
+
+    if trashed_ids and not failures:
+        flash(f"Moved {len(trashed_ids)} duplicate file(s) to Trash.", "success")
+    elif trashed_ids and failures:
+        flash(
+            f"Moved {len(trashed_ids)} file(s) to Trash. "
+            f"{len(failures)} failed: {'; '.join(failures)}",
+            "error",
+        )
+    else:
+        flash(f"Could not move any files to Trash: {'; '.join(failures)}", "error")
+
+    return redirect(url_for("duplicates_page", page=return_page))
+
+
 @app.route("/status-files")
 def status_files():
     LABELS = {

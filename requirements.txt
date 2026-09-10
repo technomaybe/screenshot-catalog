@@ -6,3 +6,4 @@ rumps>=0.4.0
 pywebview>=4.0
 pyinstaller>=6.0
 pyobjc-framework-ApplicationServices>=10.0   # AXIsProcessTrustedWithOptions (hotkey permission)
+pyobjc-framework-Cocoa>=10.0                 # NSFileManager trashItemAtURL (duplicate cleanup)

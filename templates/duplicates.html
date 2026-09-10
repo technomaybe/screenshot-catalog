@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Duplicates</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <main class="container">
+    <nav class="top-tabs" aria-label="Views">
+      <a class="tab-link {% if active_tab == 'search' %}active{% endif %}" href="/">Search</a>
+      <a class="tab-link {% if active_tab == 'word-cloud' %}active{% endif %}" href="/word-cloud">Word Cloud</a>
+      <a class="tab-link {% if active_tab == 'duplicates' %}active{% endif %}" href="/duplicates">Duplicates</a>
+      <a class="tab-link {% if active_tab == 'settings' %}active{% endif %}" href="/settings">Settings</a>
+      <a class="tab-link {% if active_tab == 'about' %}active{% endif %}" href="/about">About</a>
+    </nav>
+
+    <header class="header">
+      <h1>Duplicates</h1>
+      <p>
+        Files grouped by identical content. The oldest copy in each group is
+        pre-selected to keep; the rest are checked for removal. Review each
+        group, adjust the checkboxes, then send the checked copies to the
+        Trash — nothing is deleted permanently.
+      </p>
+    </header>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <section class="flash {{ category }}">{{ message }}</section>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    {% include '_stat_cards.html' %}
+
+    {% if not groups %}
+      <div class="empty" style="margin-top:16px;">No duplicate groups found.</div>
+    {% else %}
+      <p style="margin-top:14px; color: var(--muted); font-size:0.9rem;">
+        {{ total_groups }} duplicate group(s) — page {{ page }} of {{ total_pages }}
+      </p>
+
+      <form method="post" action="/duplicates/resolve" id="dupe-form">
+        <input type="hidden" name="page" value="{{ page }}">
+
+        <div class="page-actions" style="margin-bottom:14px; display:flex; gap:10px; align-items:center;">
+          <button type="submit" class="secondary-btn" style="background: var(--accent); color:#fff; border-color: var(--accent);"
+                  onclick="return confirm('Move the checked files to the Trash?');">
+            Move checked files to Trash
+          </button>
+          <span id="checked-count" class="field-hint"></span>
+        </div>
+
+        <section class="results">
+          {% for group in groups %}
+            <article class="card">
+              <div class="card-top">
+                <h2>{{ group|length }} copies &middot; {{ group[0]['file_hash'][:10] }}&hellip;</h2>
+              </div>
+              <div class="dupe-row">
+                {% for row in group %}
+                  <div class="dupe-item{% if loop.first %} dupe-item--keep{% endif %}">
+                    <label class="dupe-checkbox">
+                      <input type="checkbox" name="remove_ids" value="{{ row['id'] }}"
+                             {% if not loop.first %}checked{% endif %}>
+                      {% if loop.first %}Keep{% else %}Remove{% endif %}
+                    </label>
+                    <img
+                      class="dupe-thumb"
+                      src="{{ row['file_path']|img_url }}"
+                      alt="Preview of {{ row['file_name'] }}"
+                      loading="lazy"
+                      onerror="this.style.display='none'"
+                    >
+                    <div class="dupe-name" title="{{ row['file_name'] }}">{{ row['file_name'] }}</div>
+                    <div class="meta" style="margin-top:2px;">
+                      <span>Captured: {{ row['created_time'] }}</span>
+                      <span class="status-badge status-badge--{{ row['status'] }}">{{ row['status'] }}</span>
+                    </div>
+                    <div class="path">{{ row['file_path'] }}</div>
+                    <a class="open-link-btn" style="align-self:flex-start; margin-top:6px;"
+                       href="/open-preview?path={{ row['file_path']|urlencode }}">Open in Preview</a>
+                  </div>
+                {% endfor %}
+              </div>
+            </article>
+          {% endfor %}
+        </section>
+
+        <div class="page-actions" style="margin-top:14px;">
+          <button type="submit" class="secondary-btn" style="background: var(--accent); color:#fff; border-color: var(--accent);"
+                  onclick="return confirm('Move the checked files to the Trash?');">
+            Move checked files to Trash
+          </button>
+        </div>
+      </form>
+
+      {% if total_pages > 1 %}
+        <div class="page-actions" style="display:flex; gap:10px; align-items:center;">
+          {% if page > 1 %}
+            <a class="secondary-btn" href="/duplicates?page={{ page - 1 }}">&larr; Previous</a>
+          {% endif %}
+          <span class="field-hint">Page {{ page }} of {{ total_pages }}</span>
+          {% if page < total_pages %}
+            <a class="secondary-btn" href="/duplicates?page={{ page + 1 }}">Next &rarr;</a>
+          {% endif %}
+        </div>
+      {% endif %}
+    {% endif %}
+  </main>
+
+  <script>
+    (function () {
+      var form = document.getElementById('dupe-form');
+      var counter = document.getElementById('checked-count');
+      if (!form || !counter) return;
+
+      function update() {
+        var n = form.querySelectorAll('input[name="remove_ids"]:checked').length;
+        counter.textContent = n + ' file(s) selected for removal';
+      }
+
+      form.addEventListener('change', function (e) {
+        if (e.target && e.target.name === 'remove_ids') update();
+      });
+      update();
+    })();
+  </script>
+</body>
+</html>
