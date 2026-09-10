@@ -1,4 +1,5 @@
 import os
+import secrets
 import subprocess
 import sys
 import threading
@@ -12,6 +13,7 @@ from app_logging import get_logger
 from app_settings import load_settings, save_settings
 from config import (
     APP_PORT,
+    DB_PATH,
     DEFAULT_SEARCH_LIMIT,
     IMAGE_PATH_PREFIX_FROM,
     IMAGE_PATH_PREFIX_TO,
@@ -20,8 +22,55 @@ from config import (
 from export_package import build_export_package
 
 app = Flask(__name__)
-app.secret_key = "screenshot-catalog-local-secret"
 logger = get_logger("web_app")
+
+
+def _load_or_create_secret_key() -> bytes:
+    """Persist a random Flask session-signing key next to the DB, instead of
+    a hardcoded one shared by every install. Session cookies aren't used for
+    auth here, but signing flash messages with a public key is still sloppy."""
+    key_path = Path(DB_PATH).resolve().parent / ".flask_secret_key"
+    try:
+        existing = key_path.read_bytes()
+        if existing:
+            return existing
+    except OSError:
+        pass
+
+    key = secrets.token_bytes(32)
+    try:
+        key_path.write_bytes(key)
+        os.chmod(key_path, 0o600)
+    except OSError:
+        logger.warning("Could not persist Flask secret key to %s; using an in-memory key", key_path)
+    return key
+
+
+app.secret_key = _load_or_create_secret_key()
+
+
+def _is_same_origin(header_value: str) -> bool:
+    netloc = urllib.parse.urlsplit(header_value).netloc
+    return netloc == request.host
+
+
+@app.before_request
+def _block_cross_origin_writes():
+    """Reject state-changing requests whose Origin/Referer isn't this app.
+
+    This server binds to 127.0.0.1 with no authentication, which means any
+    webpage open in the user's browser can otherwise submit a plain HTML
+    form POST to it (browsers don't block cross-origin form submissions,
+    only cross-origin *reads* of the response). Without this check, a
+    malicious site could silently trigger a screen capture, wipe the OCR
+    index, or rewrite settings just by having the user's browser visit it.
+    """
+    if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
+        return
+    source = request.headers.get("Origin") or request.headers.get("Referer")
+    if source and not _is_same_origin(source):
+        logger.warning("Blocked cross-origin %s to %s (source=%s)", request.method, request.path, source)
+        abort(403, description="Cross-origin requests are not allowed")
 
 
 def resolve_image_path(file_path: str) -> str | None:
@@ -35,7 +84,7 @@ def resolve_image_path(file_path: str) -> str | None:
     if source_root and target_root:
         source_root_cmp = os.path.normcase(source_root)
         normalized_cmp = os.path.normcase(normalized)
-        if normalized_cmp.startswith(source_root_cmp):
+        if normalized_cmp == source_root_cmp or normalized_cmp.startswith(source_root_cmp + os.sep):
             relative = normalized[len(source_root):].lstrip("\\/")
             remapped = os.path.normpath(os.path.join(target_root, relative))
             if os.path.exists(remapped):
@@ -120,14 +169,30 @@ def word_cloud():
 @app.route("/settings", methods=["GET", "POST"])
 def settings_page():
     if request.method == "POST":
+        port_raw = request.form.get("app_port", str(APP_PORT)).strip()
+        try:
+            new_port = int(port_raw) if port_raw else APP_PORT
+            if not (1024 <= new_port <= 65535):
+                raise ValueError("port out of range")
+        except ValueError:
+            flash(f"Invalid port {port_raw!r} — keeping {APP_PORT}.", "error")
+            new_port = APP_PORT
+
         updated = {
             "SCREENSHOTS_DIR": request.form.get("screenshots_dir", "").strip(),
-            "APP_PORT": int(request.form.get("app_port", str(APP_PORT)).strip() or APP_PORT),
+            "APP_PORT": new_port,
             "SHOW_MENU_BAR_ICON": request.form.get("show_menu_bar_icon") == "1",
+            "CAPTURE_SAVE_DIR": request.form.get("capture_save_dir", "").strip(),
+            "HOTKEY_FULLSCREEN": request.form.get("hotkey_fullscreen", "").strip() or "cmd+ctrl+3",
+            "HOTKEY_AREA": request.form.get("hotkey_area", "").strip() or "cmd+ctrl+4",
+            "COPY_TO_CLIPBOARD": request.form.get("copy_to_clipboard") == "1",
         }
         save_settings(updated)
         logger.info("Settings updated via UI")
-        flash("Settings saved. Restart the app if you changed the port.", "success")
+        flash(
+            "Settings saved. Restart the app if you changed the port or either hotkey.",
+            "success",
+        )
         return redirect(url_for("settings_page"))
 
     settings = load_settings()
@@ -138,6 +203,22 @@ def settings_page():
         settings=settings,
         stats=db.get_stats(),
     )
+
+
+@app.post("/capture/fullscreen")
+def capture_fullscreen_route():
+    import capture
+    capture.trigger_fullscreen_async()
+    flash("Capturing full screen…", "success")
+    return redirect(request.referrer or url_for("settings_page"))
+
+
+@app.post("/capture/area")
+def capture_area_route():
+    import capture
+    capture.trigger_area_async()
+    flash("Select an area to capture (crosshair cursor)…", "success")
+    return redirect(request.referrer or url_for("settings_page"))
 
 
 @app.route("/about")
@@ -271,6 +352,36 @@ def rebuild_index():
     else:
         flash("A scan is already running. Refresh to see progress.", "success")
     return redirect(request.referrer or url_for("index"))
+
+
+@app.post("/retry-failed")
+def retry_failed():
+    """Delete only failed records and re-scan, so files that failed OCR
+    (e.g. an oversized stitched screenshot) get retried against the
+    current pipeline without re-OCR'ing the whole library."""
+    folder, raw = _validated_folder()
+    logger.info("Retry-failed requested from UI for folder: %s", raw)
+    if folder is None:
+        flash(
+            f"Screenshots folder not found: {raw or '(empty)'}. "
+            "Pick a valid folder in Settings and save, then try again.",
+            "error",
+        )
+        return redirect(request.referrer or url_for("index"))
+
+    stats_before = db.get_stats()
+    failed_count = stats_before.get("failed", 0)
+    db.clear_failed()
+
+    if _launch_scan(folder, clear_first=False):
+        flash(
+            f"Retrying {failed_count} failed file(s) — refresh this page to "
+            "watch the counts update.",
+            "success",
+        )
+    else:
+        flash("A scan is already running. Refresh to see progress.", "success")
+    return redirect(request.referrer or url_for("settings_page"))
 
 
 @app.post("/export-package")

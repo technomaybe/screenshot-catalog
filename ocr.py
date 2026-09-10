@@ -18,6 +18,13 @@ _BASE_CONFIG = "--oem 3 -c preserve_interword_spaces=1"
 # Minimum dimension below which we upscale before OCR.
 _MIN_DIMENSION = 1000
 
+# Tesseract/Leptonica can't handle a dimension above roughly 32767px (a
+# signed 16-bit limit baked into the underlying image library) and fails
+# outright with "Image too large" — full-page or "capture entire page"
+# stitched screenshots can easily blow past this on the width. Downscale
+# proportionally before OCR rather than failing the whole file.
+_MAX_TESSERACT_DIMENSION = 30000
+
 # Below this mean brightness (0-255) an image is treated as "dark mode",
 # so the primary OCR pass runs on an inverted copy.
 _DARK_THRESHOLD = 128
@@ -27,10 +34,23 @@ _DARK_THRESHOLD = 128
 _FAST = os.environ.get("OCR_FAST", "").strip().lower() in ("1", "true", "yes")
 
 
+def _shrink_if_oversized(img: Image.Image) -> Image.Image:
+    """Downscale proportionally if either dimension exceeds what Tesseract
+    can accept at all. A no-op for ordinary screenshots."""
+    w, h = img.size
+    longest = max(w, h)
+    if longest <= _MAX_TESSERACT_DIMENSION:
+        return img
+    scale = _MAX_TESSERACT_DIMENSION / longest
+    new_size = (max(1, int(w * scale)), max(1, int(h * scale)))
+    return img.resize(new_size, Image.LANCZOS)
+
+
 def _to_grayscale(img: Image.Image) -> Image.Image:
     """Normalise mode, upscale small images, and convert to greyscale."""
     if img.mode != "RGB":
         img = img.convert("RGB")
+    img = _shrink_if_oversized(img)
     w, h = img.size
     if min(w, h) < _MIN_DIMENSION:
         scale = _MIN_DIMENSION / min(w, h)

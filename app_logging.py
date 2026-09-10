@@ -3,7 +3,13 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-BASE_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+if getattr(sys, "frozen", False):
+    # Same reasoning as app_settings.py: Contents/MacOS is inside the signed
+    # bundle and gets wiped on every rebuild, so logs never accumulated
+    # there across app updates. Use Application Support instead.
+    BASE_DIR = Path.home() / "Library" / "Application Support" / "SnappyOCR"
+else:
+    BASE_DIR = Path(__file__).resolve().parent
 LOG_DIR = BASE_DIR / "logs"
 LOG_FILE = LOG_DIR / "screenshot_catalog.log"
 

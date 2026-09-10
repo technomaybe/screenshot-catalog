@@ -23,11 +23,18 @@ FROZEN = getattr(sys, "frozen", False)
 BUNDLE_DIR: Path = Path(sys._MEIPASS) if FROZEN else Path(__file__).resolve().parent
 
 # User-writable data (DB, settings, logs) — never inside the .app bundle.
-DATA_DIR: Path = (
-    Path.home() / "Library" / "Application Support" / "ScreenshotCatalog"
-    if FROZEN
-    else BUNDLE_DIR
-)
+_APP_SUPPORT = Path.home() / "Library" / "Application Support"
+DATA_DIR: Path = (_APP_SUPPORT / "SnappyOCR") if FROZEN else BUNDLE_DIR
+
+if FROZEN and not DATA_DIR.exists():
+    # One-time migration: SnappyOCR is Screenshot Catalog's new name+capture
+    # engine, not a new app — carry the existing catalog (DB, settings, logs)
+    # over so renaming doesn't look like data loss.
+    _old_data_dir = _APP_SUPPORT / "ScreenshotCatalog"
+    if _old_data_dir.exists():
+        import shutil
+        shutil.copytree(_old_data_dir, DATA_DIR)
+
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # Add bundle dir to sys.path so all project imports resolve correctly.
@@ -61,6 +68,39 @@ if FROZEN:
 
 # ── Imports (after path/env setup) ───────────────────────────────────────────
 import webview                          # pywebview — must run on main thread
+
+# pywebview's Cocoa backend unconditionally forces
+# NSApplicationActivationPolicyRegular (webview/platforms/cocoa.py:
+# `app.setActivationPolicy_(0)`, run as a BrowserView class-body statement
+# the moment that module is imported). That silently overrides Info.plist's
+# LSUIElement=True, which is why the packaged app shows a Dock icon and gets
+# regular-app window/Space semantics despite being built as a menu-bar-only
+# accessory app.
+#
+# `import webview` above does NOT trigger this on its own — pywebview's
+# Cocoa backend is loaded lazily, only once `webview.start(gui="cocoa")`
+# runs (webview/guilib.py's `initialize()`, called synchronously from
+# inside `start()`, before any window exists — this must run before
+# `webview.create_window()` too: Apple's own docs say the activation
+# policy must be set before an app creates any windows, and empirically
+# calling this later, from the `_after_start` callback after the window
+# already exists, throws an uncaught NSInvalidArgumentException and
+# crashes the whole app (confirmed via a real crash report). So this has
+# to happen here, at the top, before `main()` ever calls
+# `webview.create_window()`.
+#
+# Force the cocoa import now instead of waiting for `initialize()` to do
+# it lazily, so its activation-policy call happens immediately and this
+# override — which must win — runs right after it. Python caches the
+# module, so `initialize()`'s later `import` is a no-op.
+try:
+    import webview.platforms.cocoa  # noqa: F401  (forces `setActivationPolicy_(0)` now)
+    from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
+    NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+except Exception:
+    pass
+
+import capture
 import db
 import agent as agent_module
 from web_app import app as flask_app
@@ -121,6 +161,12 @@ def _create_status_item(window):
                 if self._window:
                     self._window.show()
 
+            def captureFullScreen_(self, sender):
+                capture.trigger_fullscreen_async()
+
+            def captureArea_(self, sender):
+                capture.trigger_area_async()
+
             def quitApp_(self, sender):
                 AppKit.NSApplication.sharedApplication().terminate_(None)
 
@@ -142,18 +188,37 @@ def _create_status_item(window):
             status_item.button().setTitle_("📷")
 
         # Menu
+        from app_settings import load_settings as _load_settings_for_menu
+        _menu_settings = _load_settings_for_menu()
+
         menu = AppKit.NSMenu.alloc().init()
 
         open_item = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-            "Open Screenshot Catalog", "openApp:", ""
+            "Open SnappyOCR", "openApp:", ""
         )
         open_item.setTarget_(delegate)
         menu.addItem_(open_item)
 
         menu.addItem_(AppKit.NSMenuItem.separatorItem())
 
+        fullscreen_hotkey = _menu_settings.get("HOTKEY_FULLSCREEN", "cmd+ctrl+3")
+        capture_full_item = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            f"Capture Full Screen ({fullscreen_hotkey})", "captureFullScreen:", ""
+        )
+        capture_full_item.setTarget_(delegate)
+        menu.addItem_(capture_full_item)
+
+        area_hotkey = _menu_settings.get("HOTKEY_AREA", "cmd+ctrl+4")
+        capture_area_item = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            f"Capture Selected Area… ({area_hotkey})", "captureArea:", ""
+        )
+        capture_area_item.setTarget_(delegate)
+        menu.addItem_(capture_area_item)
+
+        menu.addItem_(AppKit.NSMenuItem.separatorItem())
+
         quit_item = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-            "Quit Screenshot Catalog", "quitApp:", ""
+            "Quit SnappyOCR", "quitApp:", ""
         )
         quit_item.setTarget_(delegate)
         menu.addItem_(quit_item)
@@ -192,6 +257,15 @@ def _after_start(window):
             log.warning("Could not dispatch status item to main thread: %s", exc)
             _create_status_item(window)
 
+    # Global capture hotkeys — also needs the Cocoa run loop, so dispatch the
+    # same way as the status item above.
+    try:
+        from Foundation import NSOperationQueue
+        NSOperationQueue.mainQueue().addOperationWithBlock_(capture.start_hotkeys)
+    except Exception as exc:
+        log.warning("Could not dispatch hotkey registration to main thread: %s", exc)
+        capture.start_hotkeys()
+
 
 # ── JS bridge — native folder picker exposed to the web UI ───────────────────
 
@@ -218,6 +292,28 @@ class _JsApi:
             return result[0]
         return None
 
+    def suspend_hotkeys(self):
+        """Called from Settings the instant 'Record shortcut…' is clicked —
+        stops the live global hotkeys from firing on whatever combo is
+        being typed as its own replacement."""
+        try:
+            capture.suspend_hotkeys()
+            return True
+        except Exception as exc:
+            log.warning("suspend_hotkeys failed: %s", exc)
+            return False
+
+    def resume_hotkeys(self):
+        """Called once a new shortcut is captured (or Escape cancels), and
+        as a page-load safety net in case a previous session left hotkeys
+        suspended."""
+        try:
+            capture.resume_hotkeys()
+            return True
+        except Exception as exc:
+            log.warning("resume_hotkeys failed: %s", exc)
+            return False
+
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
@@ -228,7 +324,7 @@ def main():
 
     js_api = _JsApi()
     window = webview.create_window(
-        title     = "Screenshot Catalog",
+        title     = "SnappyOCR",
         url       = "about:blank",   # replaced by _after_start once Flask is ready
         width     = 1280,
         height    = 820,

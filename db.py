@@ -81,6 +81,16 @@ def clear_index():
         conn.commit()
 
 
+def clear_failed():
+    """Delete only failed records so the next scan retries them — e.g.
+    after an OCR pipeline fix like the oversized-image downscale. The
+    per-row AFTER DELETE trigger keeps FTS in sync automatically, so
+    (unlike clear_index) no full FTS rebuild is needed here."""
+    with get_connection() as conn:
+        conn.execute("DELETE FROM screenshot_index WHERE status = 'failed'")
+        conn.commit()
+
+
 def file_hash(file_path: str) -> str:
     """Return MD5 hash of a file to detect duplicates."""
     h = hashlib.md5()

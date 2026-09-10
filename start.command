@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# start.command — launch Screenshot Catalog in development mode
+# start.command — launch SnappyOCR in development mode
 # Double-click in Finder, or run: bash start.command
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,5 +21,5 @@ if [ ! -d "$SCREENSHOTS_DIR" ]; then
   echo "WARNING: Screenshots folder not found: $SCREENSHOTS_DIR"
 fi
 
-echo "Starting Screenshot Catalog..."
+echo "Starting SnappyOCR..."
 exec "$DIR/.venv/bin/python3" "$DIR/main.py"

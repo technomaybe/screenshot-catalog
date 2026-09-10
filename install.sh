@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# install.sh — one-time setup for Screenshot Catalog on macOS
+# install.sh — one-time setup for SnappyOCR on macOS
 # Run once: bash install.sh
 set -e
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DIR"
 
-echo "=== Screenshot Catalog — macOS Setup ==="
+echo "=== SnappyOCR — macOS Setup ==="
 echo ""
 
 # 1. Check Homebrew

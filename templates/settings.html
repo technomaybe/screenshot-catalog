@@ -17,7 +17,7 @@
 
     <header class="header">
       <h1>Settings</h1>
-      <p>Port changes apply after restart.</p>
+      <p>Port and hotkey changes apply after restart.</p>
     </header>
 
     {% include '_stat_cards.html' %}
@@ -32,23 +32,63 @@
 
     <section class="search-panel settings-panel">
       <form method="post" action="/settings" class="settings-form">
-        <label>Screenshots folder
+        <label>Screenshots folder (watched + OCR'd)
           <div class="folder-row" style="display:flex; gap:8px; align-items:center;">
             <input type="text" id="screenshots_dir" name="screenshots_dir"
                    value="{{ settings.SCREENSHOTS_DIR }}" style="flex:1;">
-            <button type="button" id="browse-btn" class="secondary-btn" hidden>Browse…</button>
+            <button type="button" class="secondary-btn browse-btn" data-target="screenshots_dir" hidden>Browse…</button>
           </div>
           <span class="field-hint">Use Browse to pick a folder, then Save settings. Run re-index (or restart) to apply.</span>
         </label>
+
         <label>App port
           <input type="number" name="app_port" min="1024" max="65535" value="{{ settings.APP_PORT }}">
         </label>
+
         <label class="toggle-label">
           <input type="checkbox" name="show_menu_bar_icon" value="1"
             {% if settings.SHOW_MENU_BAR_ICON %}checked{% endif %}>
           Show icon in menu bar
           <span class="field-hint">Takes effect after restart</span>
         </label>
+
+        <hr>
+        <h2 style="margin-bottom:4px;">Capture</h2>
+        <p class="field-hint" style="margin-top:0;">SnappyOCR's own capture engine — hotkeys, area selection, clipboard.</p>
+
+        <label>Save captures to
+          <div class="folder-row" style="display:flex; gap:8px; align-items:center;">
+            <input type="text" id="capture_save_dir" name="capture_save_dir"
+                   value="{{ settings.CAPTURE_SAVE_DIR }}"
+                   placeholder="Leave blank to use the Screenshots folder above" style="flex:1;">
+            <button type="button" class="secondary-btn browse-btn" data-target="capture_save_dir" hidden>Browse…</button>
+          </div>
+          <span class="field-hint">Leave blank to save into the watched Screenshots folder, so every capture is searchable right away.</span>
+        </label>
+
+        <label>Full-screen capture hotkey
+          <div class="hotkey-row" style="display:flex; gap:8px; align-items:center;">
+            <input type="text" id="hotkey_fullscreen" name="hotkey_fullscreen"
+                   value="{{ settings.HOTKEY_FULLSCREEN }}" readonly style="flex:1;">
+            <button type="button" class="secondary-btn record-hotkey-btn" data-target="hotkey_fullscreen">Record shortcut…</button>
+          </div>
+        </label>
+
+        <label>Area (crosshair) capture hotkey
+          <div class="hotkey-row" style="display:flex; gap:8px; align-items:center;">
+            <input type="text" id="hotkey_area" name="hotkey_area"
+                   value="{{ settings.HOTKEY_AREA }}" readonly style="flex:1;">
+            <button type="button" class="secondary-btn record-hotkey-btn" data-target="hotkey_area">Record shortcut…</button>
+          </div>
+          <span class="field-hint">Click Record, then press the key combo you want. Avoid Cmd+Shift+3/4/5 — macOS already owns those.</span>
+        </label>
+
+        <label class="toggle-label">
+          <input type="checkbox" name="copy_to_clipboard" value="1"
+            {% if settings.COPY_TO_CLIPBOARD %}checked{% endif %}>
+          Copy each capture to the clipboard automatically
+        </label>
+
         <div class="settings-actions">
           <button type="submit">Save settings</button>
         </div>
@@ -56,31 +96,46 @@
     </section>
 
     <section class="settings-tools">
+      <form method="post" action="/capture/fullscreen">
+        <button type="submit" class="secondary-btn">Capture Now — Full Screen</button>
+      </form>
+      <form method="post" action="/capture/area">
+        <button type="submit" class="secondary-btn">Capture Now — Select Area</button>
+      </form>
+      <span class="field-hint">Test a capture immediately, without waiting on a hotkey or restart. First use will prompt for Screen Recording / Accessibility permission if not already granted.</span>
+    </section>
+
+    <section class="settings-tools">
       <form method="post" action="/reindex">
         <button type="submit" class="secondary-btn">Run re-index now</button>
+      </form>
+      <form method="post" action="/retry-failed">
+        <button type="submit" class="secondary-btn">Retry failed files ({{ stats.failed }})</button>
       </form>
       <form method="post" action="/rebuild-index"
             onsubmit="return confirm('Rebuild the whole catalog?\n\nThis clears the index and re-OCRs every screenshot with the latest OCR. It can take a while for large libraries. Existing search data is replaced.');">
         <button type="submit" class="secondary-btn">Rebuild index (re-OCR everything)</button>
       </form>
-      <span class="field-hint">Rebuild after an OCR upgrade so older screenshots (e.g. dark-mode/charts) get re-read with the improved pipeline.</span>
+      <span class="field-hint">Rebuild after an OCR upgrade so older screenshots (e.g. dark-mode/charts) get re-read with the improved pipeline. Retry failed files is the fast path for a handful of specific failures (e.g. oversized stitched screenshots) without re-OCR'ing everything.</span>
     </section>
   </main>
 
   <script>
     // Native folder picker — only wired up when running inside the desktop app
-    // (pywebview). In a plain browser the Browse button stays hidden and the
-    // text field still works.
+    // (pywebview). In a plain browser the Browse buttons stay hidden and the
+    // text fields still work.
     (function () {
-      var btn = document.getElementById('browse-btn');
-      var input = document.getElementById('screenshots_dir');
-      if (!btn || !input) return;
+      var buttons = document.querySelectorAll('.browse-btn');
+      if (!buttons.length) return;
 
       function wire() {
-        btn.hidden = false;
-        btn.addEventListener('click', function () {
-          window.pywebview.api.pick_folder().then(function (path) {
-            if (path) { input.value = path; }
+        buttons.forEach(function (btn) {
+          btn.hidden = false;
+          btn.addEventListener('click', function () {
+            var input = document.getElementById(btn.dataset.target);
+            window.pywebview.api.pick_folder().then(function (path) {
+              if (path && input) { input.value = path; }
+            });
           });
         });
       }
@@ -90,6 +145,95 @@
       } else {
         window.addEventListener('pywebviewready', wire);
       }
+    })();
+
+    // Hotkey recorder — click "Record shortcut…", then press a key combo.
+    // Builds a string like "cmd+ctrl+3" that capture.py's parse_hotkey()
+    // understands (see capture.py for the matching keycode table).
+    (function () {
+      var recordButtons = document.querySelectorAll('.record-hotkey-btn');
+      if (!recordButtons.length) return;
+
+      var recording = null; // the button currently listening, or null
+
+      function labelFor(btn) {
+        return btn.dataset.defaultLabel || (btn.dataset.defaultLabel = btn.textContent);
+      }
+
+      function stopRecording(btn) {
+        btn.textContent = labelFor(btn);
+        btn.classList.remove('recording');
+        recording = null;
+      }
+
+      function callBridge(method) {
+        if (window.pywebview && window.pywebview.api && window.pywebview.api[method]) {
+          window.pywebview.api[method]();
+        }
+      }
+
+      // Recording steals keystrokes for the field being edited, but the
+      // global hotkeys are still live underneath — if the combo you're
+      // typing happens to match a hotkey that's still armed (e.g. testing
+      // the current default before replacing it), it fires a real capture
+      // mid-keystroke, including the screen-hijacking area selector. Tell
+      // the app to stand its hotkeys down for the duration of recording.
+      recordButtons.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          if (recording) { stopRecording(recording); }
+          recording = btn;
+          btn.textContent = 'Press keys… (Esc to cancel)';
+          btn.classList.add('recording');
+          callBridge('suspend_hotkeys');
+        });
+      });
+
+      // Safety net: if a previous visit to this page left hotkeys suspended
+      // (e.g. the window was closed mid-recording), re-arm them now.
+      function armSafetyNet() { callBridge('resume_hotkeys'); }
+      if (window.pywebview && window.pywebview.api) {
+        armSafetyNet();
+      } else {
+        window.addEventListener('pywebviewready', armSafetyNet);
+      }
+      window.addEventListener('beforeunload', function () {
+        if (recording) { callBridge('resume_hotkeys'); }
+      });
+
+      document.addEventListener('keydown', function (event) {
+        if (!recording) return;
+        event.preventDefault();
+
+        if (event.key === 'Escape') {
+          stopRecording(recording);
+          callBridge('resume_hotkeys');
+          return;
+        }
+
+        // Ignore a lone modifier press — wait for the actual key.
+        if (['Meta', 'Control', 'Alt', 'Shift'].indexOf(event.key) !== -1) return;
+
+        var parts = [];
+        if (event.metaKey) parts.push('cmd');
+        if (event.ctrlKey) parts.push('ctrl');
+        if (event.altKey) parts.push('opt');
+        if (event.shiftKey) parts.push('shift');
+
+        // Require at least one modifier — a bare key would fire on every
+        // ordinary keystroke anywhere on the system, which is exactly what
+        // a global hotkey must not do. Keep listening until one is held.
+        if (parts.length === 0) return;
+
+        var key = event.key.toLowerCase();
+        // event.key for digits/letters is already what capture.py expects;
+        // function keys come through as "F3" etc.
+        parts.push(key);
+
+        var input = document.getElementById(recording.dataset.target);
+        if (input) { input.value = parts.join('+'); }
+        stopRecording(recording);
+        callBridge('resume_hotkeys');
+      });
     })();
   </script>
 </body>
