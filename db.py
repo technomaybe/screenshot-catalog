@@ -271,6 +271,66 @@ def get_files_by_filter(filter_key: str, limit: int = 500):
         """, params).fetchall()
 
 
+def count_duplicate_groups() -> int:
+    """Number of distinct file_hash values shared by more than one indexed file."""
+    with get_connection() as conn:
+        row = conn.execute("""
+            SELECT COUNT(*) FROM (
+                SELECT file_hash FROM screenshot_index
+                GROUP BY file_hash HAVING COUNT(*) > 1
+            )
+        """).fetchone()
+        return int(row[0] or 0)
+
+
+def get_duplicate_groups(page: int = 1, per_page: int = 20):
+    """Return one page of duplicate groups, each a list of rows (oldest first)
+    that share a file_hash. Groups are ordered by copy count, largest first,
+    so the biggest space-wasters surface at the top."""
+    offset = max(0, (page - 1) * per_page)
+    with get_connection() as conn:
+        hashes = conn.execute("""
+            SELECT file_hash FROM screenshot_index
+            GROUP BY file_hash HAVING COUNT(*) > 1
+            ORDER BY COUNT(*) DESC, file_hash
+            LIMIT ? OFFSET ?
+        """, (per_page, offset)).fetchall()
+
+        groups = []
+        for (file_hash,) in hashes:
+            rows = conn.execute("""
+                SELECT id, file_name, file_path, file_hash, created_time,
+                       indexed_time, status
+                FROM screenshot_index
+                WHERE file_hash = ?
+                ORDER BY created_time ASC, id ASC
+            """, (file_hash,)).fetchall()
+            groups.append(rows)
+        return groups
+
+
+def get_records_by_ids(ids: list[int]):
+    if not ids:
+        return []
+    placeholders = ",".join("?" for _ in ids)
+    with get_connection() as conn:
+        return conn.execute(f"""
+            SELECT id, file_name, file_path, file_hash, status
+            FROM screenshot_index
+            WHERE id IN ({placeholders})
+        """, ids).fetchall()
+
+
+def delete_records_by_ids(ids: list[int]):
+    """Remove index rows for the given ids. Does not touch files on disk."""
+    if not ids:
+        return
+    placeholders = ",".join("?" for _ in ids)
+    with get_connection() as conn:
+        conn.execute(f"DELETE FROM screenshot_index WHERE id IN ({placeholders})", ids)
+        conn.commit()
+
+
 def path_exists_in_index(file_path: str) -> bool:
     with get_connection() as conn:
         row = conn.execute(
