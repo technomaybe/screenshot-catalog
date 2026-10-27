@@ -19,8 +19,8 @@ a = Analysis(
         # Branding
         (str(ROOT / "logo-v2.png"),        "."),
         (str(ROOT / "logo-image.png"),     "."),
-        # Default settings (copied to ~/Library/... on first run)
-        (str(ROOT / "app_settings.json"),  "."),
+        # app_settings.json is NOT bundled: it's gitignored (personal paths),
+        # and app_settings.DEFAULTS covers a fresh install.
     ],
     hiddenimports=[
         # Flask / Werkzeug
