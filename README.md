@@ -1,3 +1,5 @@
+<img src="docs/icon.jpg" alt="SnappyOCR icon: a magnifying glass with the letters OCR inside it" width="128" height="128">
+
 # SnappyOCR
 
 **A native macOS menu-bar app that captures your screen and makes every capture searchable — in one app.** Hit a hotkey to grab the full screen or a hand-picked area (with a live crosshair cursor), the image lands wherever you want it, gets copied to your clipboard automatically, and is OCR'd in the background so you can find it later by the text inside it.
@@ -6,6 +8,8 @@
 ![Flask](https://img.shields.io/badge/Flask-000000?style=flat-square&logo=flask&logoColor=white)
 ![macOS](https://img.shields.io/badge/macOS-000000?style=flat-square&logo=apple&logoColor=white)
 ![OCR](https://img.shields.io/badge/OCR-Tesseract-5c6bc0?style=flat-square)
+
+<img src="docs/search-results.png" alt="A search for sealant finds a screenshot by the text inside it, with the matched snippet, the full OCR text, and a preview" width="720">
 
 ---
 
